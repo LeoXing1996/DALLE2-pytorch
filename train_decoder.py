@@ -1,6 +1,9 @@
+import math
+from argparse import ArgumentParser
 from pathlib import Path
 from typing import List
 from datetime import timedelta
+from tqdm import tqdm
 
 from dalle2_pytorch.trainer import DecoderTrainer
 from dalle2_pytorch.dataloaders import create_image_embedding_dataloader
@@ -51,6 +54,8 @@ def create_dataloaders(
     val_prop = 0.15,
     test_prop = 0.10,
     seed = 0,
+    shuffle_num=None,
+    shuffle_init=False,
     **kwargs
 ):
     """
@@ -64,10 +69,14 @@ def create_dataloaders(
     train_split, test_split, val_split = torch.utils.data.random_split(available_shards, [num_train, num_test, num_val], generator=torch.Generator().manual_seed(seed))
 
     # The shard number in the webdataset file names has a fixed width. We zero pad the shard numbers so they correspond to a filename.
-    train_urls = [webdataset_base_url.format(str(shard).zfill(shard_width)) for shard in train_split]
-    test_urls = [webdataset_base_url.format(str(shard).zfill(shard_width)) for shard in test_split]
-    val_urls = [webdataset_base_url.format(str(shard).zfill(shard_width)) for shard in val_split]
-    
+    # train_urls = [webdataset_base_url.format(str(shard).zfill(shard_width)) for shard in train_split]
+    # test_urls = [webdataset_base_url.format(str(shard).zfill(shard_width)) for shard in test_split]
+    # val_urls = [webdataset_base_url.format(str(shard).zfill(shard_width)) for shard in val_split]
+
+    train_urls = [webdataset_base_url.format(str(shard)) for shard in train_split]
+    test_urls = [webdataset_base_url.format(str(shard)) for shard in test_split]
+    val_urls = [webdataset_base_url.format(str(shard)) for shard in val_split]
+
     create_dataloader = lambda tar_urls, shuffle=False, resample=False, for_sampling=False: create_image_embedding_dataloader(
         tar_url=tar_urls,
         num_workers=num_workers,
@@ -75,10 +84,11 @@ def create_dataloaders(
         img_embeddings_url=img_embeddings_url,
         text_embeddings_url=text_embeddings_url,
         index_width=index_width,
-        shuffle_num = None,
+        shuffle_num = shuffle_num,
+        shuffle_init=shuffle_init,
         extra_keys= ["txt"],
         shuffle_shards = shuffle,
-        resample_shards = resample, 
+        resample_shards = resample,
         img_preproc=img_preproc,
         handler=wds.handlers.warn_and_continue
     )
@@ -134,6 +144,7 @@ def get_example_data(dataloader, device, n=5):
             break
     return list(zip(images[:n], img_embeddings[:n], text_embeddings[:n], captions[:n]))
 
+@torch.no_grad()
 def generate_samples(trainer, example_data, clip=None, start_unet=1, end_unet=None, condition_on_text_encodings=False, cond_scale=1.0, device=None, text_prepend="", match_image_size=True):
     """
     Takes example data and generates images from the embeddings
@@ -178,6 +189,8 @@ def generate_samples(trainer, example_data, clip=None, start_unet=1, end_unet=No
         real_images = [resize_image_to(image, generated_image_size, clamp_range=(0, 1)) for image in real_images]
     return real_images, generated_images, captions
 
+
+@torch.no_grad()
 def generate_grid_samples(trainer, examples, clip=None, start_unet=1, end_unet=None, condition_on_text_encodings=False, cond_scale=1.0, device=None, text_prepend=""):
     """
     Generates samples and uses torchvision to put them in a side by side grid for easy viewing
@@ -185,7 +198,8 @@ def generate_grid_samples(trainer, examples, clip=None, start_unet=1, end_unet=N
     real_images, generated_images, captions = generate_samples(trainer, examples, clip, start_unet, end_unet, condition_on_text_encodings, cond_scale, device, text_prepend)
     grid_images = [torchvision.utils.make_grid([original_image, generated_image]) for original_image, generated_image in zip(real_images, generated_images)]
     return grid_images, captions
-                    
+
+@torch.no_grad()
 def evaluate_trainer(trainer, dataloader, device, start_unet, end_unet, clip=None, condition_on_text_encodings=False, cond_scale=1.0, inference_device=None, n_evaluation_samples=1000, FID=None, IS=None, KID=None, LPIPS=None):
     """
     Computes evaluation metrics for the decoder
@@ -193,10 +207,25 @@ def evaluate_trainer(trainer, dataloader, device, start_unet, end_unet, clip=Non
     metrics = {}
     # Prepare the data
     examples = get_example_data(dataloader, device, n_evaluation_samples)
+
     if len(examples) == 0:
         print("No data to evaluate. Check that your dataloader has shards.")
         return metrics
-    real_images, generated_images, captions = generate_samples(trainer, examples, clip, start_unet, end_unet, condition_on_text_encodings, cond_scale, inference_device)
+
+    s_idx = 0
+    n_steps = int(math.ceil(len(examples) / 64))
+    real_images, generated_images, captions = [], [], []
+    for step in tqdm(range(n_steps), desc='Run Evaluation'):
+        s_idx = step * 64
+        e_idx = min(s_idx + 64, len(examples))
+        examples_subset = examples[s_idx: e_idx]
+        real_images_, generated_images_, captions_ = generate_samples(
+            trainer, examples_subset, clip, start_unet, end_unet, condition_on_text_encodings, cond_scale, inference_device)
+        real_images += real_images_
+        generated_images += generated_images_
+        captions += captions_
+
+    # real_images, generated_images, captions = generate_samples(trainer, examples, clip, start_unet, end_unet, condition_on_text_encodings, cond_scale, inference_device)
     real_images = torch.stack(real_images).to(device=device, dtype=torch.float)
     generated_images = torch.stack(generated_images).to(device=device, dtype=torch.float)
     # Convert from [0, 1] to [0, 255] and from torch.float to torch.uint8
@@ -253,7 +282,7 @@ def save_trainer(tracker: Tracker, trainer: DecoderTrainer, epoch: int, sample: 
     Logs the model with an appropriate method depending on the tracker
     """
     tracker.save(trainer, is_best=is_best, is_latest=is_latest, epoch=epoch, sample=sample, next_task=next_task, validation_losses=validation_losses, samples_seen=samples_seen)
-    
+
 def recall_trainer(tracker: Tracker, trainer: DecoderTrainer):
     """
     Loads the model with an appropriate method depending on the tracker
@@ -335,11 +364,12 @@ def train(
         accelerator.print("Generated training examples")
         test_example_data = get_example_data(dataloaders["test_sampling"], inference_device, n_sample_images)
         accelerator.print("Generated testing examples")
-    
+
     send_to_device = lambda arr: [x.to(device=inference_device, dtype=torch.float) for x in arr]
 
     sample_length_tensor = torch.zeros(1, dtype=torch.int, device=inference_device)
     unet_losses_tensor = torch.zeros(TRAIN_CALC_LOSS_EVERY_ITERS, trainer.num_unets, dtype=torch.float, device=inference_device)
+
     for epoch in range(start_epoch, epochs):
         accelerator.print(print_ribbon(f"Starting epoch {epoch}", repeat=40))
 
@@ -392,7 +422,7 @@ def train(
                     loss = trainer.forward(img, **forward_params, unet_number=unet, _device=inference_device)
                     trainer.update(unet_number=unet)
                     unet_losses_tensor[i % TRAIN_CALC_LOSS_EVERY_ITERS, unet-1] = loss
-                
+
                 samples_per_sec = (sample - last_sample) / timer.elapsed()
                 timer.reset()
                 last_sample = sample
@@ -430,10 +460,11 @@ def train(
                         trainer.eval()
                         train_images, train_captions = generate_grid_samples(trainer, train_example_data, clip, first_trainable_unet, last_trainable_unet, condition_on_text_encodings, cond_scale, inference_device, "Train: ")
                         tracker.log_images(train_images, captions=train_captions, image_section="Train Samples", step=step())
-                
+
                 if epoch_samples is not None and sample >= epoch_samples:
                     break
-            next_task = 'val'
+            # next_task = 'val'
+            next_task = 'eval'
             sample = 0
 
         all_average_val_losses = None
@@ -465,7 +496,7 @@ def train(
                     if not unet_training_mask[unet-1]: # Unet index is the unet number - 1
                         # No need to evaluate an unchanging unet
                         continue
-                        
+
                     forward_params = {}
                     if has_img_embedding:
                         forward_params['image_embed'] = img_emb.float()
@@ -494,7 +525,7 @@ def train(
                     accelerator.print(f"Epoch {epoch}/{epochs} Val Step {i} -  Sample {val_sample} - {samples_per_sec:.2f} samples/sec")
                     accelerator.print(f"Loss: {(average_val_loss_tensor / (i+1))}")
                     accelerator.print("")
-                
+
                 if validation_samples is not None and val_sample >= validation_samples:
                     break
             print(f"Rank {accelerator.state.process_index} finished validation after {i} steps")
@@ -550,7 +581,7 @@ def create_tracker(accelerator: Accelerator, config: TrainDecoderConfig, config_
     tracker.save_config(config_path, config_name='decoder_config.json')
     tracker.add_save_metadata(state_dict_key='config', metadata=config.dict())
     return tracker
-    
+
 def initialize_training(config: TrainDecoderConfig, config_path):
     # Make sure if we are not loading, distributed models are initialized to the same values
     torch.manual_seed(config.seed)
@@ -569,7 +600,7 @@ def initialize_training(config: TrainDecoderConfig, config_path):
     # If we are in deepspeed fp16 mode, we must ensure learned variance is off
     if accelerator.mixed_precision == "fp16" and accelerator.distributed_type == accelerate_dataclasses.DistributedType.DEEPSPEED and config.decoder.learned_variance:
         raise ValueError("DeepSpeed fp16 mode does not support learned variance")
-    
+
     # Set up data
     all_shards = list(range(config.data.start_shard, config.data.end_shard + 1))
     world_size = accelerator.num_processes
@@ -637,11 +668,20 @@ def initialize_training(config: TrainDecoderConfig, config_path):
         condition_on_text_encodings=conditioning_on_text,
         **config.train.dict(),
     )
-    
+
+
+def parse_args():
+    parser = ArgumentParser()
+    parser.add_argument("--config_file", default="./train_decoder_config.json", help="Path to config file")
+    return parser.parse_args()
+    pass
+
 # Create a simple click command line interface to load the config and start the training
-@click.command()
-@click.option("--config_file", default="./train_decoder_config.json", help="Path to config file")
-def main(config_file):
+# @click.command()
+# @click.option("--config_file", default="./train_decoder_config.json", help="Path to config file")
+def main():
+    args = parse_args()
+    config_file = args.config_file
     config_file_path = Path(config_file)
     config = TrainDecoderConfig.from_json_path(str(config_file_path))
     initialize_training(config, config_path=config_file_path)

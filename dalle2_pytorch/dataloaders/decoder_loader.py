@@ -51,7 +51,7 @@ def embedding_inserter(samples, embeddings_url, index_width, sample_key='npy', h
                 # This means if we shuffle before inserting it will load many more files than we expect and be very inefficient.
                 previous_tar_url = tar_url
                 current_embeddings = load_corresponding_embeds(tar_url)
-                
+
             embedding_index = int(key[-index_width:])
             embedding = current_embeddings[embedding_index]
             # We need to check if this sample is nonzero. If it is, this embedding is not valid and we should continue to the next loop
@@ -158,6 +158,7 @@ class ImageEmbeddingDataset(wds.DataPipeline, wds.compat.FluidInterface):
         """
         super().__init__()
         keys = ["jpg", "emb"] + extra_keys
+        # keys = ["jpeg", "emb"] + extra_keys
         # if img_embedding_folder_url is not None:
         #     keys.append("img_emb")
         # if text_embedding_folder_url is not None:
@@ -185,7 +186,7 @@ class ImageEmbeddingDataset(wds.DataPipeline, wds.compat.FluidInterface):
             self.append(wds.SimpleShardList(urls))
             if shuffle_shards:
                 self.append(wds.filters.shuffle(1000))
-        
+
         if img_embedding_folder_url is not None:
             # There may be webdataset shards that do not have a embedding shard associated with it. If we do not skip these, they would cause issues.
             self.append(skip_unassociated_shards(embeddings_url=img_embedding_folder_url, handler=handler))
@@ -212,6 +213,7 @@ class ImageEmbeddingDataset(wds.DataPipeline, wds.compat.FluidInterface):
         """Applies the preprocessing for images"""
         if self.img_preproc is not None:
             sample["jpg"] = self.img_preproc(sample["jpg"])
+            # sample["jpg"] = self.img_preproc(sample["jpeg"])
         return sample
 
 def create_image_embedding_dataloader(
@@ -223,7 +225,8 @@ def create_image_embedding_dataloader(
     index_width=None,
     shuffle_num = None,
     shuffle_shards = True,
-    resample_shards = False, 
+    shuffle_init = False,
+    resample_shards = False,
     img_preproc=None,
     extra_keys=[],
     handler=wds.handlers.reraise_exception#warn_and_continue
@@ -255,7 +258,9 @@ def create_image_embedding_dataloader(
         handler=handler
     )
     if shuffle_num is not None and shuffle_num > 0:
-        ds.shuffle(1000)
+        # NOTE: this is important for ImageNet!!!!
+        shuffle_init = shuffle_num if shuffle_init is not None else 1
+        ds.shuffle(shuffle_num, initial=shuffle_init)
     return DataLoader(
         ds,
         num_workers=num_workers,

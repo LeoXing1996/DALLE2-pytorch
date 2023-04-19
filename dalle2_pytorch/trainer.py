@@ -211,8 +211,8 @@ class DiffusionPriorTrainer(nn.Module):
         # mixed precision checks
 
         if (
-            exists(self.accelerator) 
-            and self.accelerator.distributed_type == DistributedType.DEEPSPEED 
+            exists(self.accelerator)
+            and self.accelerator.distributed_type == DistributedType.DEEPSPEED
             and self.diffusion_prior.clip is not None
             ):
             # Then we need to make sure clip is using the correct precision or else deepspeed will error
@@ -239,7 +239,7 @@ class DiffusionPriorTrainer(nn.Module):
             self.scheduler = CosineAnnealingLR(self.optimizer, T_max = cosine_decay_max_steps)
         else:
             self.scheduler = LambdaLR(self.optimizer, lr_lambda = lambda _: 1.0)
-        
+
         self.warmup_scheduler = warmup.LinearWarmup(self.optimizer, warmup_period = warmup_steps) if exists(warmup_steps) else None
 
         # distribute the model if using HFA
@@ -351,7 +351,7 @@ class DiffusionPriorTrainer(nn.Module):
 
         if exists(self.max_grad_norm):
             self.accelerator.clip_grad_norm_(self.diffusion_prior.parameters(), self.max_grad_norm)
-        
+
         self.optimizer.step()
         self.optimizer.zero_grad()
 

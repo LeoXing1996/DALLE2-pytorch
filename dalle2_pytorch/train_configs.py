@@ -290,6 +290,8 @@ class DecoderDataConfig(BaseModel):
     shuffle_train: bool = True
     resample_train: bool = False
     preprocessing: Dict[str, Any] = {'ToTensor': True}
+    shuffle_num: int = 1000
+    shuffle_init: bool = False
 
     @property
     def img_preproc(self):
@@ -347,7 +349,7 @@ class TrainDecoderConfig(BaseModel):
         with open(json_path) as f:
             config = json.load(f)
         return cls(**config)
-    
+
     @root_validator
     def check_has_embeddings(cls, values):
         # Makes sure that enough information is provided to get the embeddings specified for training

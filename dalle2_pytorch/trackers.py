@@ -14,6 +14,9 @@ from dalle2_pytorch.trainer import DecoderTrainer, DiffusionPriorTrainer
 from dalle2_pytorch.version import __version__
 from packaging import version
 
+import wandb
+wandb.init
+
 # constants
 
 DEFAULT_DATA_PATH = './.tracker-data'
@@ -211,7 +214,7 @@ class UrlLoader(BaseLoader):
         urllib.request.urlretrieve(self.url, str(save_path))
         # Load the file
         return torch.load(str(save_path), map_location='cpu')
-        
+
 
 class LocalLoader(BaseLoader):
     """
@@ -250,7 +253,7 @@ class WandbLoader(BaseLoader):
             assert self.run_path is not None, 'wandb run was not found to load from. If not using the wandb logger must specify the `wandb_run_path`.'
         assert self.run_path is not None, '`wandb_run_path` must be provided for the wandb loader'
         assert self.file_path is not None, '`wandb_file_path` must be provided for the wandb loader'
-        
+
         os.environ["WANDB_SILENT"] = "true"
         pass  # TODO: Actually implement that
 
@@ -382,7 +385,7 @@ class HuggingfaceSaver(BaseSaver):
             path_in_repo=str(save_path),
             repo_id=self.huggingface_repo
         )
-        
+
 saver_type_map = {
     'local': LocalSaver,
     'wandb': WandbSaver,
@@ -450,7 +453,7 @@ class Tracker:
         if self.did_auto_resume:
             print(f'\n\nWARNING: RUN HAS BEEN AUTO-RESUMED WITH THE LOGGER TYPE {self.logger.__class__.__name__}.\nIf this was not your intention, stop this run and set `auto_resume` to `False` in the config.\n\n')
             print(f"New logger config: {self.logger.__dict__}")
-        
+
         self.save_metadata = dict(
             version = version.parse(__version__)
         )  # Data that will be saved alongside the checkpoint or model
@@ -487,7 +490,7 @@ class Tracker:
         if self.dummy_mode:
             return
         self.logger.log(*args, **kwargs)
-    
+
     def log_images(self, *args, **kwargs):
         if self.dummy_mode:
             return
@@ -585,12 +588,12 @@ class Tracker:
                 except Exception as e:
                     self.logger.log_error(f'Error saving checkpoint: {e}', **kwargs)
                     print(f'Error saving checkpoint: {e}')
-    
+
     @property
     def can_recall(self):
         # Defines whether a recall can be performed.
         return self.loader is not None and (not self.loader.only_auto_resume or self.did_auto_resume)
-    
+
     def recall(self):
         if self.can_recall:
             return self.loader.recall()
@@ -598,4 +601,3 @@ class Tracker:
             raise ValueError('Tried to recall, but no loader was set or auto-resume was not performed.')
 
 
-    
