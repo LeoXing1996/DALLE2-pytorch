@@ -2,7 +2,6 @@
 .tracker-data/
 
 # Configuration Files
-configs/*
 !configs/*.example
 !configs/*_defaults.py
 !configs/README.md
