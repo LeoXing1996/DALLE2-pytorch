@@ -1068,7 +1068,7 @@ class DiffusionPriorNetwork(nn.Module):
 
         if not exists(text_encodings):
             text_encodings = torch.empty((batch, 0, dim), device = device, dtype = dtype)
-    
+
         mask = torch.any(text_encodings != 0., dim = -1)
 
         # replace any padding in the text encodings with learned padding tokens unique across position
@@ -2474,7 +2474,7 @@ class Decoder(nn.Module):
         predict_x_start_for_latent_diffusion = False,
         image_sizes = None,                         # for cascading ddpm, image size at each stage
         random_crop_sizes = None,                   # whether to random crop the image at that stage in the cascade (super resoluting convolutions at the end may be able to generalize on smaller crops)
-        use_noise_for_lowres_cond = False,          # whether to use Imagen-like noising for low resolution conditioning  
+        use_noise_for_lowres_cond = False,          # whether to use Imagen-like noising for low resolution conditioning
         use_blur_for_lowres_cond = True,            # whether to use the blur conditioning used in the original cascading ddpm paper, as well as DALL-E2
         lowres_downsample_first = True,             # cascading ddpm - resizes to lower resolution, then to next conditional resolution + blur
         blur_prob = 0.5,                            # cascading ddpm - when training, the gaussian blur is only applied 50% of the time
@@ -2745,7 +2745,7 @@ class Decoder(nn.Module):
 
     def dynamic_threshold(self, x):
         """ proposed in https://arxiv.org/abs/2205.11487 as an improved clamping in the setting of classifier free guidance """
-        
+
         # s is the threshold amount
         # static thresholding would just be s = 1
         s = 1.

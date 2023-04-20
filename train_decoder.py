@@ -292,6 +292,11 @@ def recall_trainer(tracker: Tracker, trainer: DecoderTrainer):
     trainer.load_state_dict(state_dict, only_model=False, strict=True)
     return state_dict.get("epoch", 0), state_dict.get("validation_losses", []), state_dict.get("next_task", "train"), state_dict.get("sample", 0), state_dict.get("samples_seen", 0)
 
+def recall_trainer_from_state_dict(trainer, resume_from):
+    state_dict = torch.load(resume_from, map_location="cpu")
+    trainer.load_state_dict(state_dict, only_model=False, strict=True)
+    return state_dict.get("epoch", 0), state_dict.get("validation_losses", []), state_dict.get("next_task", "train"), state_dict.get("sample", 0), state_dict.get("samples_seen", 0)
+
 def train(
     dataloaders,
     decoder: Decoder,
@@ -309,6 +314,7 @@ def train(
     unet_training_mask=None,
     condition_on_text_encodings=False,
     cond_scale=1.0,
+    resume_from=None,
     **kwargs
 ):
     """
@@ -355,6 +361,14 @@ def train(
             val_sample = recalled_sample
         accelerator.print(f"Loaded model from {type(tracker.loader).__name__} on epoch {start_epoch} having seen {samples_seen} samples with minimum validation loss {min(validation_losses) if len(validation_losses) > 0 else 'N/A'}")
         accelerator.print(f"Starting training from task {next_task} at sample {sample} and validation sample {val_sample}")
+    elif resume_from:
+        start_epoch, validation_losses, next_task, recalled_sample, samples_seen = recall_trainer_from_state_dict(trainer, resume_from)
+        if next_task == 'train':
+            sample = recalled_sample
+        if next_task == 'val':
+            val_sample = recalled_sample
+        accelerator.print(f"Loaded model from {resume_from} on epoch {start_epoch} having seen {samples_seen} samples with minimum validation loss {min(validation_losses) if len(validation_losses) > 0 else 'N/A'}")
+
     trainer.to(device=inference_device)
 
     accelerator.print(print_ribbon("Generating Example Data", repeat=40))
@@ -582,7 +596,7 @@ def create_tracker(accelerator: Accelerator, config: TrainDecoderConfig, config_
     tracker.add_save_metadata(state_dict_key='config', metadata=config.dict())
     return tracker
 
-def initialize_training(config: TrainDecoderConfig, config_path):
+def initialize_training(config: TrainDecoderConfig, config_path, resume_from=None):
     # Make sure if we are not loading, distributed models are initialized to the same values
     torch.manual_seed(config.seed)
 
@@ -666,6 +680,7 @@ def initialize_training(config: TrainDecoderConfig, config_path):
         inference_device=accelerator.device,
         evaluate_config=config.evaluate,
         condition_on_text_encodings=conditioning_on_text,
+        resume_from=resume_from,
         **config.train.dict(),
     )
 
@@ -673,8 +688,8 @@ def initialize_training(config: TrainDecoderConfig, config_path):
 def parse_args():
     parser = ArgumentParser()
     parser.add_argument("--config_file", default="./train_decoder_config.json", help="Path to config file")
+    parser.add_argument('--resume', default=None)
     return parser.parse_args()
-    pass
 
 # Create a simple click command line interface to load the config and start the training
 # @click.command()
@@ -684,7 +699,7 @@ def main():
     config_file = args.config_file
     config_file_path = Path(config_file)
     config = TrainDecoderConfig.from_json_path(str(config_file_path))
-    initialize_training(config, config_path=config_file_path)
+    initialize_training(config, config_path=config_file_path, resume_from=args.resume)
 
 if __name__ == "__main__":
     main()
